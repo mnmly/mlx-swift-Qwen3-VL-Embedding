@@ -1,0 +1,19 @@
+.DS_Store
+*.profraw
+.build/
+.xcdd/
+.xcdd-*/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+*.xcuserstate
+DerivedData/
+Package.resolved
+.swiftpm/
+# Local model weights / parity fixtures (multi-GB, never committed)
+/Weights/
+/Fixtures/
+*.safetensors
+
+# DocC static site output
+/docs/

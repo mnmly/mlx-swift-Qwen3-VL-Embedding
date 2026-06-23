@@ -1,0 +1,23 @@
+mlx-swift-Qwen3-VL-Embedding
+Copyright (c) 2026 Hiroaki Yamane
+
+This product includes software developed by ml-explore, used under the MIT License:
+
+  • mlx-swift-lm — https://github.com/ml-explore/mlx-swift-lm
+    Copyright (c) 2024 ml-explore. MIT License.
+    `Sources/MLXQwen3VLEmbedding/Vendored/Qwen3VLBackbone.swift` is a modified copy of
+    `Libraries/MLXVLM/Models/Qwen3VL.swift` (tag 3.31.3). The processor, configuration, and
+    the rest of the framework are consumed as a dependency. See
+    `Sources/MLXQwen3VLEmbedding/Vendored/VENDORED.md` for the list of modifications.
+
+  • mlx-swift — https://github.com/ml-explore/mlx-swift
+    Copyright (c) 2023 ml-explore. MIT License.
+
+This package is a Swift port of, and is designed to reproduce the behavior of, the reference
+implementation, used under the Apache License 2.0:
+
+  • Qwen3-VL-Embedding & Qwen3-VL-Reranker — https://github.com/QwenLM/Qwen3-VL-Embedding
+    Copyright the Qwen team, Alibaba Cloud. Apache License 2.0.
+
+Model weights (e.g. Qwen/Qwen3-VL-Embedding-2B, Qwen/Qwen3-VL-Reranker-2B) are distributed
+separately by their authors under their own licenses and are not included in this repository.
