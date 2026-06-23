@@ -4,6 +4,8 @@ Apple-Silicon port of [QwenLM/Qwen3-VL-Embedding](https://github.com/QwenLM/Qwen
 & Qwen3-VL-Reranker, built on [mlx-swift](https://github.com/ml-explore/mlx-swift) and
 [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm).
 
+📖 **[API documentation](https://mnmly.github.io/mlx-swift-Qwen3-VL-Embedding/)**
+
 ![Qwen3-VL Embedding & Reranker demo — cross-modal (text + image) embedding on the left, reranking on the right](assets/demo.png)
 
 The Qwen3-VL **backbone** (vision tower + language model, DeepStack, interleaved-MRoPE, QK-norm)
@@ -70,7 +72,8 @@ auto-discover models from the Hugging Face cache and skip cleanly when absent.
 
 ## Documentation
 
-DocC reference docs: `Scripts/build_docs.sh` emits a static site to `docs/`
+📖 **[API reference (DocC)](https://mnmly.github.io/mlx-swift-Qwen3-VL-Embedding/)** — built and
+deployed from `main` by `.github/workflows/docs.yml`. Build locally with `Scripts/build_docs.sh`
 (`Scripts/build_docs.sh preview` for live reload).
 
 ## Weights
