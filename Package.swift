@@ -33,7 +33,7 @@ let package = Package(
         // Remote, versioned dependencies. Both reference the same
         // github.com/ml-explore/mlx-swift, so there is a single `mlx-swift` identity in the
         // graph (no local-path override conflict).
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", from: "3.31.3"),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", from: "3.31.4"),
         .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.31.4"),
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
