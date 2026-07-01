@@ -837,25 +837,18 @@ enum Qwen3VLLanguage {
             visualMask: MLXArray,
             visualEmbeds: MLXArray
         ) -> MLXArray {
-            let indices = maskIndices(visualMask)
-            guard !indices.isEmpty else { return hiddenStates }
-
-            let indexArray = MLXArray(indices.map { UInt32($0) })
-
-            let result = hiddenStates
-            result[0..., indexArray, 0...] = result[0..., indexArray, 0...] + visualEmbeds
-
-            return result
-        }
-
-        private func maskIndices(_ mask: MLXArray) -> [Int] {
-            let bools = mask.asType(.bool).asArray(Bool.self)
-            var indices: [Int] = []
-            indices.reserveCapacity(bools.count)
-            for (idx, value) in bools.enumerated() where value {
-                indices.append(idx)
-            }
-            return indices
+            // Add `visualEmbeds` (one row per visual token, in order) to the hidden
+            // states at the visual positions marked by `visualMask` ([B*S] bool),
+            // fully on-device: per-position feature index = cumsum(mask)-1, gather
+            // the embed row per position, keep it only where the mask is set.
+            // Replaces a host round-trip (asArray(Bool) + Swift index loop).
+            guard visualEmbeds.dim(0) > 0 else { return hiddenStates }
+            let b = hiddenStates.dim(0), s = hiddenStates.dim(1), h = hiddenStates.dim(2)
+            let flat = visualMask.asType(.int32).reshaped([-1])
+            let seg = maximum(cumsum(flat, axis: 0) - 1, MLXArray(Int32(0)))
+            let gathered = visualEmbeds[seg].reshaped([b, s, h])
+            let maskF = visualMask.asType(hiddenStates.dtype).reshaped([b, s, 1])
+            return hiddenStates + gathered * maskF
         }
     }
 
@@ -1253,6 +1246,7 @@ public final class Qwen3VLBackbone: Module, VLMModel, KVCacheDimensionProvider {
 
         let nImageTokens = specialMask.sum().item(Int.self)
 
+        let mask2D = specialMask                                   // [B, S] bool (pre-expand)
         specialMask = expandedDimensions(specialMask, axis: -1)
         let maskExpanded = broadcast(specialMask, to: inputEmbeds.shape)
 
@@ -1264,33 +1258,20 @@ public final class Qwen3VLBackbone: Module, VLMModel, KVCacheDimensionProvider {
             throw Qwen3VLError.featureTokenMismatch(expected: nImageTokens, actual: nImageFeatures)
         }
 
-        let originalShape = inputEmbeds.shape
-        let flattenedEmbeds = inputEmbeds.flattened()
-        let flattenedFeatures = imageFeatures.flattened()
-        let flattenedMask = maskExpanded.flattened()
-
-        let indices = nonZero(flattenedMask.asType(.bool))
-
-        var result = flattenedEmbeds
-        if !indices.isEmpty && indices.count == flattenedFeatures.size {
-            let indexArray = MLXArray(indices.map { UInt32($0) })
-            result[indexArray] = flattenedFeatures
-        }
-
-        result = result.reshaped(originalShape)
-
         let visualMask = specialMask.squeezed(axis: -1).asType(.bool)
-        return (result, visualMask)
-    }
 
-    private func nonZero(_ mask: MLXArray) -> [Int] {
-        let values = mask.asArray(Bool.self)
-        var indices: [Int] = []
-        indices.reserveCapacity(values.count)
-        for (idx, value) in values.enumerated() where value {
-            indices.append(idx)
-        }
-        return indices
+        // Scatter image features into their token slots on-device: per-token feature
+        // index = cumsum(mask)-1, gather one feature row per position, select it where
+        // the mask is set (else keep the text embedding). Replaces a host round-trip
+        // (nonZero → asArray(Bool) over seq×hidden → Swift index build → scatter).
+        guard imageFeatures.dim(0) > 0 else { return (inputEmbeds, visualMask) }
+        let b = inputEmbeds.dim(0), s = inputEmbeds.dim(1), h = inputEmbeds.dim(2)
+        let flatMask = mask2D.asType(.int32).reshaped([-1])        // [B*S]
+        let seg = maximum(cumsum(flatMask, axis: 0) - 1, MLXArray(Int32(0)))
+        let gathered = imageFeatures[seg].reshaped([b, s, h])      // [B, S, H]
+        let maskF = mask2D.asType(inputEmbeds.dtype).reshaped([b, s, 1])
+        let result = inputEmbeds * (1 - maskF) + gathered * maskF
+        return (result, visualMask)
     }
 
     private func combinedFrames(
