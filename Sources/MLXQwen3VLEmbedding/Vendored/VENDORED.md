@@ -7,13 +7,25 @@
 
 ## Provenance
 
-- **Upstream:** `ml-explore/mlx-swift-lm`, tag **`3.31.3`**,
+- **Vendored from:** `ml-explore/mlx-swift-lm`, tag **`3.31.3`**,
   file `Libraries/MLXVLM/Models/Qwen3VL.swift`.
-- This package depends on the same `mlx-swift-lm` `3.31.3` (and `mlx-swift` `0.31.4`) via
-  remote SPM dependencies, so the vendored copy matches the consumed `MLXVLM` products.
-  (At `3.31.3` the M-RoPE `ropeDeltas` is a `private var` instance variable; a later `main`
-  commit moved it into a typed `LMOutput.State`/`Key` dict — this vendored copy uses the
-  `3.31.3` instance-var form.)
+- **Consumed version:** this package now depends on `mlx-swift-lm` **`3.31.4`**
+  (`from: "3.31.4"`) and `mlx-swift` `0.31.4`. The vendored *model* is the `3.31.3` copy; the
+  processor, configuration, and message generator come from `3.31.4`'s `MLXVLM`.
+- **Re-diffed `3.31.3 → 3.31.4` (2026-07):** the only change to `Qwen3VL.swift` in that bump is
+  the M-RoPE delta cache moving from a `private var ropeDeltas` instance variable into a typed
+  `LMOutput.State`/`Key` dict (threading a `state:` param through `callAsFunction`, returning
+  `LMOutput(logits:, state:)`). This vendored copy keeps the `3.31.3` instance-var form.
+  **It does not affect the embedding path:** `ropeDeltas` only caches across *generation* steps,
+  and the embedder runs a single prefill (offset 0, `pixelValues != nil` resets it) — the cache
+  is never read. Verified: compiles against `3.31.4` with exact image-embedding cosine parity.
+  **No re-apply required.**
+- Benign side effect of not tracking that refactor: `Qwen3VLBackbone.callAsFunction` keeps the
+  old `(_ inputs: MLXArray, cache:)` signature (3.31.4 is
+  `(_ input: LMInput.Text, cache:, state:) -> LMOutput`). The embedder never calls it (only
+  `lastHiddenState`/`prepare`), so it is dead-but-harmless — it would only matter if this
+  backbone were used to *generate*. (The `3.31.3 → 3.31.4` `Qwen3VLMessageGenerator.addToolMetadata`
+  addition is in the message generator, which is **not** vendored — irrelevant.)
 
 ## What was vendored (and what was NOT)
 
@@ -45,5 +57,18 @@ reused from `MLXVLM` (imported), so there is exactly one source of truth for tho
 ## Maintenance
 
 When bumping `mlx-swift-lm`, re-diff `Qwen3VL.swift` against this file and re-apply
-modifications 1–4. The reranker path does **not** use this file (it uses stock
+modifications 1–4. **Last re-diffed at `3.31.4`** — current, no re-apply needed (see the
+re-diff note under *Provenance*). The reranker path does **not** use this file (it uses stock
 `MLXVLM.Qwen3VL`), so changes here only affect the embedder.
+
+### Retiring this file
+
+This vendored copy exists for two reasons that upstream could remove — see the drafts under
+[`upstream/`](./upstream/):
+
+1. `01-vision-gelu-precise.md` — fixes the vision-MLP GELU (`.fast` → `.precise`); mod #5.
+2. `02-expose-last-hidden-state.md` — adds a public pre-`lm_head` `lastHiddenState` accessor;
+   the reason this file exists (mods 3–4).
+
+If both land in a released `mlx-swift-lm`, this file can be deleted and the embedder can run
+against stock `MLXVLM.Qwen3VL`.
