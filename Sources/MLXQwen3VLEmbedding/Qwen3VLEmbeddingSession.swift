@@ -31,18 +31,25 @@ public struct Qwen3VLEmbeddingSession: Sendable {
 
     /// Embed each content item into a (optionally L2-normalized, optionally MRL-truncated)
     /// vector. Requires a session loaded with `task: .embedding`.
-    public func embed(_ contents: [Qwen3VLContent]) async throws -> [[Float]] {
-        try await engine.embed(contents)
+    ///
+    /// `instruction`, when non-nil, overrides the session's configured/default
+    /// instruction for this call only — pass a retrieval task instruction on the
+    /// query side to do asymmetric query↔document retrieval on one loaded session.
+    /// `nil` (the default) keeps the prior session-wide behaviour.
+    public func embed(
+        _ contents: [Qwen3VLContent], instruction: String? = nil
+    ) async throws -> [[Float]] {
+        try await engine.embed(contents, instruction: instruction)
     }
 
     /// Text-only convenience.
-    public func embed(texts: [String]) async throws -> [[Float]] {
-        try await embed(texts.map { .text($0) })
+    public func embed(texts: [String], instruction: String? = nil) async throws -> [[Float]] {
+        try await embed(texts.map { .text($0) }, instruction: instruction)
     }
 
     /// Embed a single content item.
-    public func embed(_ content: Qwen3VLContent) async throws -> [Float] {
-        try await embed([content])[0]
+    public func embed(_ content: Qwen3VLContent, instruction: String? = nil) async throws -> [Float] {
+        try await embed([content], instruction: instruction)[0]
     }
 
     // MARK: - Reranking

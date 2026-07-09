@@ -66,8 +66,16 @@ public actor Qwen3VLEmbeddingEngine {
     /// Embed each content item: run the backbone, take the last-token (EOS) hidden
     /// state, optionally truncate to the Matryoshka dimension, optionally L2-normalize.
     /// Mirrors the reference `Qwen3VLEmbedder._pooling_last` + `F.normalize`.
-    public func embed(_ contents: [Qwen3VLContent]) async throws -> [[Float]] {
-        let instruction = config.resolvedInstruction
+    ///
+    /// `instruction`, when non-nil, overrides `config.resolvedInstruction` for THIS
+    /// call only — the lever for asymmetric retrieval: embed a search *query* with a
+    /// task instruction ("retrieve passages that answer this") distinct from how the
+    /// *documents* were embedded, without loading a second session. `nil` preserves
+    /// the prior behaviour (the session-wide configured/default instruction).
+    public func embed(
+        _ contents: [Qwen3VLContent], instruction: String? = nil
+    ) async throws -> [[Float]] {
+        let instruction = instruction ?? config.resolvedInstruction
         let minPixels = config.minPixels
         let maxPixels = config.maxPixels
         let normalize = config.normalize
