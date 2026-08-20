@@ -5,6 +5,7 @@
 // CLI and a SwiftUI frontend (the swift-cli-gui-shared-driver pattern).
 
 import Foundation
+import MLX
 
 public struct Qwen3VLEmbeddingConfig: Sendable {
     /// Directory holding a model snapshot (config.json + *.safetensors + tokenizer + preprocessor_config.json).
@@ -32,6 +33,25 @@ public struct Qwen3VLEmbeddingConfig: Sendable {
     /// Bound on MLX's reusable Metal buffer cache (bytes); `nil` leaves the MLX default.
     public var gpuCacheLimit: Int?
 
+    /// Safety valve for ``Qwen3VLEmbeddingSession/embed(_:instruction:batchSize:)``: the most
+    /// image patches (rows × the largest image in the micro-batch) one model call may carry.
+    /// A micro-batch that would exceed it is split.
+    ///
+    /// It bounds the work the language model wastes on right-padding — prompts are padded to
+    /// the batch's longest, so one full-resolution image among small ones would otherwise
+    /// make every row pay full resolution. At the default, a batch of maximum-resolution
+    /// images (5120 patches each) caps itself at six rows.
+    public var maxBatchPatches: Int
+
+    /// Cast the checkpoint's floating-point parameters to this dtype at load, or `nil` to
+    /// keep the checkpoint's own (bfloat16 for the released weights).
+    ///
+    /// `.float32` doubles the resident weights and is slower, but it removes bfloat16
+    /// rounding — the way to tell a genuine numerical difference from the model's own
+    /// quantization noise when verifying, say, that a batched forward matches an unbatched
+    /// one.
+    public var computeDType: DType?
+
     public init(
         modelDirectory: URL,
         task: Qwen3VLTask,
@@ -42,7 +62,9 @@ public struct Qwen3VLEmbeddingConfig: Sendable {
         normalize: Bool = true,
         embeddingDimension: Int? = nil,
         instruction: String? = nil,
-        gpuCacheLimit: Int? = 512 * 1024 * 1024
+        gpuCacheLimit: Int? = 512 * 1024 * 1024,
+        maxBatchPatches: Int = 32_768,
+        computeDType: DType? = nil
     ) {
         self.modelDirectory = modelDirectory
         self.task = task
@@ -53,6 +75,8 @@ public struct Qwen3VLEmbeddingConfig: Sendable {
         self.embeddingDimension = embeddingDimension
         self.instruction = instruction
         self.gpuCacheLimit = gpuCacheLimit
+        self.maxBatchPatches = maxBatchPatches
+        self.computeDType = computeDType
     }
 
     /// The instruction to use, falling back to the task default.

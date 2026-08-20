@@ -9,6 +9,12 @@
 //     `Qwen3VLVision.rotateHalf` (identical) so MLXVLM's internal QwenVL isn't needed.
 //   - Added `lastHiddenState(_:cache:)` exposing the pre-`lm_head` hidden state,
 //     which the public `Qwen3VL`/`VLMModel` surface does not expose (logits only).
+//   - Widened `Qwen3VLBackbone.visionModel` and `.languageModel` from private to internal
+//     so the batched forward (`Qwen3VLBatchedForward.swift`, a pure addition living outside
+//     this file to keep the upstream diff small) can drive them. Bodies are untouched.
+//   - `Qwen3VLVision.Attention.callAsFunction` skips the block-diagonal mask when the
+//     batch holds a single sequence (the mask is then all-zero, i.e. a no-op) — this
+//     also removes a per-block `cuSeqlens.asArray` GPU sync. Numerically identical.
 
 import Foundation
 import MLX
@@ -189,14 +195,25 @@ enum Qwen3VLVision {
             keys = keys.reshaped(1, sequenceLength, numHeads, headDim).transposed(0, 2, 1, 3)
             values = values.reshaped(1, sequenceLength, numHeads, headDim).transposed(0, 2, 1, 3)
 
-            var mask = ones([1, sequenceLength, sequenceLength], dtype: queries.dtype)
-            mask = mask * MLXArray(-1e9, dtype: queries.dtype)
+            // `cuSeqlens` delimits the per-frame blocks of the block-diagonal mask. Its
+            // *shape* (frames + 1) is known without evaluating it, so a single frame can
+            // take the maskless path: the mask would be all-zero anyway, and building it
+            // costs an O(seq²) materialization plus a `cuSeqlens.asArray` GPU sync in every
+            // one of the 24 vision blocks. (Local modification — see the file header.)
+            let maskMode: MLXFast.ScaledDotProductAttentionMaskMode
+            if cuSeqlens.dim(0) <= 2 {
+                maskMode = .none
+            } else {
+                var mask = ones([1, sequenceLength, sequenceLength], dtype: queries.dtype)
+                mask = mask * MLXArray(-1e9, dtype: queries.dtype)
 
-            let seqlens = cuSeqlens.asArray(Int.self)
-            for idx in 1 ..< seqlens.count {
-                let start = seqlens[idx - 1]
-                let end = seqlens[idx]
-                mask[0..., start ..< end, start ..< end] = MLXArray(0, dtype: queries.dtype)
+                let seqlens = cuSeqlens.asArray(Int.self)
+                for idx in 1 ..< seqlens.count {
+                    let start = seqlens[idx - 1]
+                    let end = seqlens[idx]
+                    mask[0..., start ..< end, start ..< end] = MLXArray(0, dtype: queries.dtype)
+                }
+                maskMode = .array(mask)
             }
 
             let attended = MLXFast.scaledDotProductAttention(
@@ -204,7 +221,7 @@ enum Qwen3VLVision {
                 keys: keys,
                 values: values,
                 scale: scale,
-                mask: .array(mask)
+                mask: maskMode
             )
             .transposed(0, 2, 1, 3)
             .reshaped(sequenceLength, -1)
@@ -1215,8 +1232,8 @@ extension Qwen3VLLanguage {
 
 public final class Qwen3VLBackbone: Module, VLMModel, KVCacheDimensionProvider {
 
-    @ModuleInfo(key: "vision_tower") private var visionModel: Qwen3VLVision.VisionModel
-    @ModuleInfo(key: "language_model") private var languageModel: Qwen3VLLanguage.LanguageModel
+    @ModuleInfo(key: "vision_tower") var visionModel: Qwen3VLVision.VisionModel
+    @ModuleInfo(key: "language_model") var languageModel: Qwen3VLLanguage.LanguageModel
 
     public let config: Qwen3VLConfiguration
 

@@ -54,10 +54,21 @@ reused from `MLXVLM` (imported), so there is exactly one source of truth for tho
    This should be reported upstream. (The `PatchMerger`'s `GELU()` = exact erf is correct —
    it matches PyTorch `nn.GELU()`.)
 
+6. **Perf:** `Qwen3VLVision.Attention.callAsFunction` skips building the block-diagonal
+   `cuSeqlens` mask when the call carries a single frame — the mask is then all-zero, i.e. a
+   no-op, and building it costs an O(patches²) materialization plus a `cuSeqlens.asArray`
+   GPU sync in *every* one of the 24 vision blocks. Numerically identical; measured 2.3×
+   end-to-end on full-resolution images (1.35 → 3.17 img/s on an M5 Max) and it also drops
+   peak GPU memory from 7.2 GB to 5.1 GB. The single-frame case is the only one the embedder
+   and reranker ever hit. This should be reported upstream.
+7. Widened `Qwen3VLBackbone.visionModel` and `.languageModel` from `private` to internal so
+   `Qwen3VLBatchedForward.swift` (a pure addition outside this file, which keeps the upstream
+   re-diff small) can drive them for the batched embedding path.
+
 ## Maintenance
 
 When bumping `mlx-swift-lm`, re-diff `Qwen3VL.swift` against this file and re-apply
-modifications 1–4. **Last re-diffed at `3.31.4`** — current, no re-apply needed (see the
+modifications 1–7. **Last re-diffed at `3.31.4`** — current, no re-apply needed (see the
 re-diff note under *Provenance*). The reranker path does **not** use this file (it uses stock
 `MLXVLM.Qwen3VL`), so changes here only affect the embedder.
 

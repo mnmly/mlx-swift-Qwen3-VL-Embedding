@@ -5,6 +5,7 @@
 // exposes the embedding / reranking heads; no model/engine setup lives in either
 // frontend. Cadence, autoreleasepool, and MainActor hops stay frontend-side.
 
+import CoreGraphics
 import Foundation
 
 /// A ready-to-go Qwen3-VL embedding / reranking session.
@@ -50,6 +51,37 @@ public struct Qwen3VLEmbeddingSession: Sendable {
     /// Embed a single content item.
     public func embed(_ content: Qwen3VLContent, instruction: String? = nil) async throws -> [Float] {
         try await embed([content], instruction: instruction)[0]
+    }
+
+    /// Embed many items with `batchSize` of them per model call — the corpus-indexing
+    /// entry point.
+    ///
+    /// Identical math to the unbatched `embed(_:instruction:)` — prompts are right-padded to
+    /// the batch's longest and pooled at each row's own final token, so padding never reaches
+    /// a vector — but with one language-model prefill per micro-batch instead of one per
+    /// item. Vectors come back in input order.
+    ///
+    /// - Parameters:
+    ///   - contents: the items to embed.
+    ///   - instruction: per-call instruction override, as in the unbatched overload.
+    ///   - batchSize: items per model call; `1` reproduces the unbatched path. 8–16 is a
+    ///     good starting point for a mixed-resolution image corpus.
+    public func embed(
+        _ contents: [Qwen3VLContent], instruction: String? = nil, batchSize: Int
+    ) async throws -> [[Float]] {
+        try await engine.embed(contents, instruction: instruction, batchSize: batchSize)
+    }
+
+    /// Image-only convenience over ``embed(_:instruction:batchSize:)``.
+    ///
+    /// - Parameters:
+    ///   - images: images to embed, one vector each, returned in input order.
+    ///   - instruction: per-call instruction override.
+    ///   - batchSize: images per model call.
+    public func embed(
+        images: [CGImage], instruction: String? = nil, batchSize: Int = 8
+    ) async throws -> [[Float]] {
+        try await embed(images.map { .image($0) }, instruction: instruction, batchSize: batchSize)
     }
 
     // MARK: - Reranking

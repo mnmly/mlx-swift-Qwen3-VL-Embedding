@@ -14,7 +14,7 @@ struct Qwen3VLEmbedTool: AsyncParsableCommand {
         commandName: "qwen3vl-embed",
         abstract: "Embed / rerank multimodal inputs with Qwen3-VL on Apple Silicon.",
         version: MLXQwen3VLEmbedding.version,
-        subcommands: [Embed.self, Rerank.self, Bench.self]
+        subcommands: [Embed.self, Rerank.self, Bench.self, ImageBench.self]
     )
 }
 

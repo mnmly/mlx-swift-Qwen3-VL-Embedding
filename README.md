@@ -44,6 +44,9 @@ let embedder = try await Qwen3VLEmbeddingSession.load(
 let textVecs = try await embedder.embed(texts: ["a golden retriever puppy", "the Eiffel Tower"])
 let imageVec = try await embedder.embed(.image(cgImage))            // same space as text
 
+// Indexing a corpus: one language-model prefill per micro-batch, vectors in input order.
+let vecs = try await embedder.embed(images: chunkOfCGImages, batchSize: 16)
+
 let reranker = try await Qwen3VLEmbeddingSession.load(
     .init(modelDirectory: rerankerModelURL, task: .reranker))
 let ranked = try await reranker.rankedDocuments(
@@ -51,12 +54,39 @@ let ranked = try await reranker.rankedDocuments(
     documents: [.text("Paris is the capital of France."), .text("Bananas are yellow.")])
 ```
 
+## Indexing an image corpus
+
+`embed(images:batchSize:)` folds several prompts into one language-model prefill. Measured on an
+M5 Max (128 GB), embedding 128 images end-to-end, best of three passes:
+
+| Corpus | patches/image | one at a time | batch 8 | batch 32 |
+|---|---|---|---|---|
+| 512×384, uniform | 768 | 14.6 img/s | 25.6 | **25.8** (1.77×) |
+| BL Books originals, mixed | 190–2 900 | 11.8 img/s | 13.8 | **14.4** (1.22×) |
+| ≤1400 px edge, mixed | ~1 000–5 100 | 4.44 img/s | 4.48 | **4.51** (1.02×) |
+| 1280×1024 (the processor's pixel cap) | 5 120 | 3.17 img/s | **3.28** (1.03×) | — |
+
+The pattern is the point: batching pays when a single image is too small to fill the GPU, and a
+native-resolution image large enough to hit the processor's pixel cap already fills it on its own.
+Peak GPU stays between 4.6 GB and 6.6 GB across the whole sweep.
+
+The *vision tower* is deliberately **not** batched — see the header of
+`Sources/MLXQwen3VLEmbedding/Qwen3VLBatchedForward.swift` for the measurements behind that.
+
+Batched vectors match the one-at-a-time path to cosine **0.999996** in float32
+(`Qwen3VLEmbeddingConfig.computeDType = .float32`). In the shipped bfloat16 they agree to 0.9989,
+which is well inside the checkpoint's own quantization noise: against a float32 reference, the
+unbatched path scores 0.9987 and the batched path 0.9987 — batching costs no accuracy.
+`BatchParityTests` enforces both bars.
+
 ## CLI
 
 ```sh
 qwen3vl-embed embed  --model <Embedding-2B-dir> "a dog" "a cat" --image photo.jpg
 qwen3vl-embed rerank --model <Reranker-2B-dir>  "capital of France" "Paris is the capital." "…"
 qwen3vl-embed bench  --model <Embedding-2B-dir> --iterations 20   # throughput + leak watch
+qwen3vl-embed image-bench --model <Embedding-2B-dir> --images <dir> \
+  --count 128 --batch-sizes 1,4,8,16,32                           # batch sweep + parity
 ```
 
 ## Build & test
