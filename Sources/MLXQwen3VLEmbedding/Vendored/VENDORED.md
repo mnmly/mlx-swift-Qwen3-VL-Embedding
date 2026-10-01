@@ -27,6 +27,16 @@
   backbone were used to *generate*. (The `3.31.3 → 3.31.4` `Qwen3VLMessageGenerator.addToolMetadata`
   addition is in the message generator, which is **not** vendored — irrelevant.)
 
+- **Ported to `3.32.3` (2026-10):** the package now requires `mlx-swift-lm` **`3.32.3`** /
+  `mlx-swift` `0.32.3`. Only two API changes reach this file and the engine: the `LanguageModel`
+  requirement `prepare(_:cache:windowSize:)` became `prepare(_:cache:state:prefill:)` (the
+  vendored `prepare` now takes `state`/`prefill`, both unused — single prefill, no chunking), and
+  `newCache(parameters:)` now `throws`. The vendored *model* is otherwise still the `3.31.3` copy.
+  Upstream `3.32.3` also fixed the vision-MLP GELU (mod #5, now `gelu_pytorch_tanh` → `.tanh`) and
+  reworked vision attention/M-RoPE for speed; none of that is pulled in here. Separately, the
+  3.32 *processor* (not vendored) applies the sRGB tone curve to images itself, so
+  `Qwen3VLPromptBuilder` no longer pre-applies it (doing both drops image cosine to ~0.945).
+
 ## What was vendored (and what was NOT)
 
 Only the **model** is copied: `Qwen3VLVision`, `Qwen3VLLanguage`, and the top-level

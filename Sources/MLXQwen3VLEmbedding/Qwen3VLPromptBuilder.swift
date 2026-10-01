@@ -111,15 +111,15 @@ enum Qwen3VLPromptBuilder {
     private static func makeUserInput(
         messages: [Message], images: [CGImage], minPixels _: Int, maxPixels _: Int
     ) -> UserInput {
-        // The stock processor's image path renders pixels in CoreImage's linear working
-        // space (asMLXArray uses colorSpace: nil), which darkens midtones vs the reference's
-        // sRGB-encoded PIL pixels. Pre-applying the sRGB tone curve (as the video path does)
-        // makes the rendered values match. See the image-preprocessing parity work.
+        // Images go in as-is: since mlx-swift-lm 3.32 the stock Qwen3-VL processor applies the
+        // sRGB tone curve itself before resampling (matching the reference's sRGB-encoded PIL
+        // pixels). Pre-applying it here as well — needed up to 3.31.x — applies it twice and
+        // drops image-embedding cosine vs the reference from ~0.997 to ~0.945.
         //
-        // Note: the Qwen3-VL processor resizes from the model's `preprocessor_config`
-        // (`config.size`), not from per-call `UserInput.Processing` overrides, so the
-        // `minPixels`/`maxPixels` budgets are informational here.
-        let imageInputs: [UserInput.Image] = images.map { .ciImage(CIImage(cgImage: $0).toSRGB()) }
+        // Note: the processor resizes from the model's `preprocessor_config` (capped at a
+        // 1,280-token budget, which is what the released checkpoints ship), not from these
+        // `minPixels`/`maxPixels` budgets, so they are informational here.
+        let imageInputs: [UserInput.Image] = images.map { .ciImage(CIImage(cgImage: $0)) }
         return UserInput(prompt: .messages(messages), images: imageInputs)
     }
 }

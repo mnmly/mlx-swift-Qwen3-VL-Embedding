@@ -104,7 +104,7 @@ public actor Qwen3VLEmbeddingEngine {
                     minPixels: minPixels, maxPixels: maxPixels)
                 let prepared = try await context.processor.prepare(input: input)
                 let lmInput = Self.appendingEmbeddingEOS(prepared, eosId: eosId)
-                let cache = backbone.newCache(parameters: nil)
+                let cache = try backbone.newCache(parameters: nil)
                 // [1, seq, hidden]
                 let hidden = try backbone.lastHiddenState(lmInput, cache: cache)
                 let seq = hidden.dim(1)
@@ -437,7 +437,7 @@ public actor Qwen3VLEmbeddingEngine {
                             pixels: nil, grid: nil))
                     continue
                 }
-                let cache = backbone.newCache(parameters: nil)
+                let cache = try backbone.newCache(parameters: nil)
                 let hidden = try backbone.lastHiddenState(lmInput, cache: cache)  // [1, seq, hidden]
                 let score = Self.relevance(hidden[0..., hidden.dim(1) - 1], direction: direction)
                 MLX.eval(score)

@@ -35,8 +35,11 @@ let package = Package(
         // Remote, versioned dependencies. Both reference the same
         // github.com/ml-explore/mlx-swift, so there is a single `mlx-swift` identity in the
         // graph (no local-path override conflict).
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", from: "3.31.4"),
-        .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.31.4"),
+        // 3.32.3 floor: the vendored backbone conforms to the 3.32 `LanguageModel` protocol
+        // (`prepare(_:cache:state:prefill:)`, throwing `newCache`), and the prompt builder relies
+        // on the 3.32 processor applying the sRGB tone curve itself.
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", from: "3.32.3"),
+        .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.32.3"),
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),

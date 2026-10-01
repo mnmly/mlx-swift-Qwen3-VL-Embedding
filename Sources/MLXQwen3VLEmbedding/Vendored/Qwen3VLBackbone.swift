@@ -1391,7 +1391,8 @@ public final class Qwen3VLBackbone: Module, VLMModel, KVCacheDimensionProvider {
     public func prepare(
         _ input: LMInput,
         cache: [any KVCache],
-        windowSize _: Int?
+        state _: LMOutput.State?,
+        prefill _: PrefillParameters
     ) throws -> PrepareResult {
         let li = try buildLanguageInputs(input)
         let typedCache = castCache(cache)
