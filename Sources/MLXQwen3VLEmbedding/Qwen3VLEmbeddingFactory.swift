@@ -2,9 +2,8 @@
 //
 // A VLM model factory that loads the *vendored* ``Qwen3VLBackbone`` (which exposes
 // `lastHiddenState`) for the `qwen3_vl` model type, while reusing MLXVLM's stock
-// processor and model registries + the standard load path. The reranker keeps using
-// `VLMModelFactory.shared` (stock `Qwen3VL`, logits only); only the embedder needs
-// this factory.
+// processor and model registries + the standard load path. Both heads load through it:
+// the embedder pools the hidden state, the reranker projects it onto `W[yes] − W[no]`.
 
 import Foundation
 import MLXLMCommon

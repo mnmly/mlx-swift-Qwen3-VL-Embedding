@@ -69,8 +69,10 @@ reused from `MLXVLM` (imported), so there is exactly one source of truth for tho
 
 When bumping `mlx-swift-lm`, re-diff `Qwen3VL.swift` against this file and re-apply
 modifications 1–7. **Last re-diffed at `3.31.4`** — current, no re-apply needed (see the
-re-diff note under *Provenance*). The reranker path does **not** use this file (it uses stock
-`MLXVLM.Qwen3VL`), so changes here only affect the embedder.
+re-diff note under *Provenance*). Both heads use this file: the reranker also reads the
+pre-`lm_head` hidden state (it scores `(W[yes] − W[no]) · h` in float32, reading `W` from
+`languageModel.lmHead` or, when tied, `languageModel.model.embedTokens`), so changes here affect
+embedding *and* reranking.
 
 ### Retiring this file
 
@@ -81,5 +83,6 @@ This vendored copy exists for two reasons that upstream could remove — see the
 2. `02-expose-last-hidden-state.md` — adds a public pre-`lm_head` `lastHiddenState` accessor;
    the reason this file exists (mods 3–4).
 
-If both land in a released `mlx-swift-lm`, this file can be deleted and the embedder can run
-against stock `MLXVLM.Qwen3VL`.
+If both land in a released `mlx-swift-lm`, this file can be deleted and both heads can run
+against stock `MLXVLM.Qwen3VL` (the reranker additionally needs the `lm_head` / tied
+`embed_tokens` weights, which the stock model exposes as `internal` today).

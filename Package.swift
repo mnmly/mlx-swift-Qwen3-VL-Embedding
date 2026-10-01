@@ -11,8 +11,10 @@
 //     optional Matryoshka (MRL) truncation. Needs the pre-`lm_head` hidden state,
 //     which the public `Qwen3VL` does not expose, so a copy of the backbone is
 //     vendored under Sources/MLXQwen3VLEmbedding/Vendored (see VENDORED.md).
-//   • Reranker — sigmoid(logits[yes] − logits[no]) at the last position. Uses the
-//     stock `MLXVLM.Qwen3VL` logits directly; no vendored code required.
+//   • Reranker — sigmoid((W[yes] − W[no]) · h) on the last position's hidden state, in
+//     float32 (the reference's binary linear head). Also reads the pre-`lm_head` hidden
+//     state from the vendored backbone: the two bfloat16 logits would each be rounded to a
+//     1/16 step before the subtraction.
 //
 // A single library-side `Qwen3VLEmbeddingSession` drives both the CLI and the
 // SwiftUI app (the swift-cli-gui-shared-driver pattern).

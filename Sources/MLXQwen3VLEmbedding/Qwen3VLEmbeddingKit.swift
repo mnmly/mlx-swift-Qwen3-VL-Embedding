@@ -19,6 +19,7 @@ public enum MLXQwen3VLEmbedding {
 public enum Qwen3VLTask: String, Sendable, CaseIterable {
     /// Multimodal embedding (last-token pooling + L2 + optional MRL truncation).
     case embedding
-    /// Query/document relevance scoring (sigmoid of `logits[yes] − logits[no]`).
+    /// Query/document relevance scoring: sigmoid of `(W[yes] − W[no]) · h` in float32, the
+    /// reference's binary head (`logits[yes] − logits[no]` without bfloat16 logit rounding).
     case reranker
 }

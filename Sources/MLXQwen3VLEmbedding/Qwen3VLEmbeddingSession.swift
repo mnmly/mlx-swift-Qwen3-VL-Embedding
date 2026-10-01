@@ -87,23 +87,40 @@ public struct Qwen3VLEmbeddingSession: Sendable {
     // MARK: - Reranking
 
     /// Relevance scores in document order for one query against many documents.
+    ///
+    /// - Parameters:
+    ///   - query: the query, scored against every document.
+    ///   - documents: the candidates.
+    ///   - batchSize: text-only pairs per model call (pairs with images run one at a time);
+    ///     `1` scores one pair per call. The default was the fastest measured for ~1,000-character
+    ///     passages; batched and unbatched scores agree.
     public func rerank(
-        query: Qwen3VLContent, documents: [Qwen3VLContent]
+        query: Qwen3VLContent, documents: [Qwen3VLContent], batchSize: Int = 8
     ) async throws -> [Float] {
-        try await engine.rerank(query: query, documents: documents)
+        try await engine.rerank(query: query, documents: documents, batchSize: batchSize)
     }
 
     /// Text-only convenience: score `query` against each document string.
-    public func rerank(query: String, documents: [String]) async throws -> [Float] {
+    ///
+    /// - Parameters:
+    ///   - query: the query text.
+    ///   - documents: the candidate texts.
+    ///   - batchSize: pairs per model call, as in ``rerank(query:documents:batchSize:)-(Qwen3VLContent,_,_)``.
+    public func rerank(query: String, documents: [String], batchSize: Int = 8) async throws -> [Float] {
         try await rerank(
-            query: .text(query), documents: documents.map { .text($0) })
+            query: .text(query), documents: documents.map { .text($0) }, batchSize: batchSize)
     }
 
     /// Documents ranked best-first as `(originalIndex, score)`.
+    ///
+    /// - Parameters:
+    ///   - query: the query, scored against every document.
+    ///   - documents: the candidates.
+    ///   - batchSize: text-only pairs per model call, as in ``rerank(query:documents:batchSize:)-(Qwen3VLContent,_,_)``.
     public func rankedDocuments(
-        query: Qwen3VLContent, documents: [Qwen3VLContent]
+        query: Qwen3VLContent, documents: [Qwen3VLContent], batchSize: Int = 8
     ) async throws -> [(index: Int, score: Float)] {
-        let scores = try await rerank(query: query, documents: documents)
+        let scores = try await rerank(query: query, documents: documents, batchSize: batchSize)
         return scores.enumerated()
             .map { (index: $0.offset, score: $0.element) }
             .sorted { $0.score > $1.score }

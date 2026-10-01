@@ -48,26 +48,21 @@ public actor Qwen3VLEmbeddingEngine {
         let directory = Qwen3VLModel.resolveSnapshotDirectory(config.modelDirectory)
         self.modelDirectory = directory
         let loader = #huggingFaceTokenizerLoader()
-        switch config.task {
-        case .embedding:
-            // Vendored backbone exposes `lastHiddenState` for last-token pooling. The wrapped
-            // loader suppresses the tokenizer's auto-appended `<|endoftext|>` on `encode(text:)`,
-            // which otherwise breaks stock image-placeholder matching (see NoAutoSpecialsTokenizer).
-            self.container = try await Qwen3VLEmbeddingFactory.shared.loadContainer(
-                from: directory, using: Qwen3VLEmbeddingTokenizerLoader(base: loader))
-            if let computeDType = config.computeDType {
-                // Cast the checkpoint's floating-point parameters (see
-                // ``Qwen3VLEmbeddingConfig/computeDType``).
-                await self.container.perform { (ctx: ModelContext) in
-                    _ = (ctx.model as? Qwen3VLBackbone)?.apply {
-                        $0.dtype.isFloatingPoint ? $0.asType(computeDType) : $0
-                    }
+        // Both heads read the pre-`lm_head` hidden state, which only the vendored backbone
+        // exposes: the embedder pools it, the reranker projects it onto `W[yes] − W[no]` in
+        // float32. The wrapped loader suppresses the tokenizer's auto-appended `<|endoftext|>`
+        // on `encode(text:)`, which otherwise breaks stock image-placeholder matching (see
+        // NoAutoSpecialsTokenizer).
+        self.container = try await Qwen3VLEmbeddingFactory.shared.loadContainer(
+            from: directory, using: Qwen3VLEmbeddingTokenizerLoader(base: loader))
+        if let computeDType = config.computeDType {
+            // Cast the checkpoint's floating-point parameters (see
+            // ``Qwen3VLEmbeddingConfig/computeDType``).
+            await self.container.perform { (ctx: ModelContext) in
+                _ = (ctx.model as? Qwen3VLBackbone)?.apply {
+                    $0.dtype.isFloatingPoint ? $0.asType(computeDType) : $0
                 }
             }
-        case .reranker:
-            // Stock `Qwen3VL` logits are sufficient for the yes/no score.
-            self.container = try await VLMModelFactory.shared.loadContainer(
-                from: directory, using: loader)
         }
     }
 
@@ -85,6 +80,7 @@ public actor Qwen3VLEmbeddingEngine {
     public func embed(
         _ contents: [Qwen3VLContent], instruction: String? = nil
     ) async throws -> [[Float]] {
+        guard config.task == .embedding else { throw Qwen3VLEmbeddingError.embedderNotLoaded }
         let instruction = instruction ?? config.resolvedInstruction
         let minPixels = config.minPixels
         let maxPixels = config.maxPixels
@@ -151,6 +147,7 @@ public actor Qwen3VLEmbeddingEngine {
     public func embed(
         _ contents: [Qwen3VLContent], instruction: String? = nil, batchSize: Int
     ) async throws -> [[Float]] {
+        guard config.task == .embedding else { throw Qwen3VLEmbeddingError.embedderNotLoaded }
         guard batchSize > 1, contents.count > 1 else {
             return try await embed(contents, instruction: instruction)
         }
@@ -260,6 +257,32 @@ public actor Qwen3VLEmbeddingEngine {
         normalize: Bool,
         dimension: Int?
     ) throws -> [(Int, [Float])] {
+        var pooled = lastTokenStates(
+            rows, backbone: backbone, padId: eosId, positionCache: &positionCache
+        ).asType(.float32)
+        if let dimension { pooled = pooled[0..., 0 ..< dimension] }
+        if normalize {
+            let norm = sqrt((pooled * pooled).sum(axis: 1, keepDims: true))
+            pooled = pooled / maximum(norm, MLXArray(Float(1e-12)))
+        }
+        MLX.eval(pooled)
+
+        let width = pooled.dim(1)
+        let flat = pooled.asArray(Float.self)
+        return rows.enumerated().map { offset, row in
+            (row.index, Array(flat[(offset * width) ..< ((offset + 1) * width)]))
+        }
+    }
+
+    /// Run one right-padded batch and return each row's final hidden state at its own last
+    /// real token: `[B, hidden]`, lazy, in the model's dtype. Shared by the batched embedding
+    /// and reranking paths.
+    private static func lastTokenStates(
+        _ rows: [PreparedRow],
+        backbone: Qwen3VLBackbone,
+        padId: Int,
+        positionCache: inout [PositionKey: MLXArray]
+    ) -> MLXArray {
         let batch = rows.count
         let sequence = rows.map(\.tokens.count).max() ?? 0
 
@@ -273,7 +296,7 @@ public actor Qwen3VLEmbeddingEngine {
         for row in rows {
             flatTokens.append(contentsOf: row.tokens)
             flatTokens.append(
-                contentsOf: repeatElement(Int32(eosId), count: sequence - row.tokens.count))
+                contentsOf: repeatElement(Int32(padId), count: sequence - row.tokens.count))
 
             let key = PositionKey(tokens: row.tokens, grid: row.grid)
             let cached = positionCache[key]
@@ -306,23 +329,10 @@ public actor Qwen3VLEmbeddingEngine {
                 positionIds: concatenated(positionRows, axis: 1),
                 visionRows: visionRows))
 
-        // Pool each row at its own final token rather than the padded last column.
+        // Read each row at its own final token rather than the padded last column.
         let last = MLXArray(rows.map { Int32($0.tokens.count - 1) }).reshaped([batch, 1, 1])
-        var pooled = takeAlong(hidden, broadcast(last, to: [batch, 1, hidden.dim(2)]), axis: 1)
+        return takeAlong(hidden, broadcast(last, to: [batch, 1, hidden.dim(2)]), axis: 1)
             .squeezed(axis: 1)
-            .asType(.float32)
-        if let dimension { pooled = pooled[0..., 0 ..< dimension] }
-        if normalize {
-            let norm = sqrt((pooled * pooled).sum(axis: 1, keepDims: true))
-            pooled = pooled / maximum(norm, MLXArray(Float(1e-12)))
-        }
-        MLX.eval(pooled)
-
-        let width = pooled.dim(1)
-        let flat = pooled.asArray(Float.self)
-        return rows.enumerated().map { offset, row in
-            (row.index, Array(flat[(offset * width) ..< ((offset + 1) * width)]))
-        }
     }
 
     /// Split a micro-batch further when `count × paddedLength` would exceed the patch
@@ -377,10 +387,25 @@ public actor Qwen3VLEmbeddingEngine {
 
     // MARK: - Reranking
 
-    /// Score each `(query, document)` pair: `sigmoid(logits[yes] − logits[no])` at the
-    /// final prompt position. Uses the stock `Qwen3VL` logits — no vendored backbone.
+    /// Score each `(query, document)` pair: `sigmoid((W[yes] − W[no]) · h)`, where `h` is the
+    /// final hidden state at the last prompt position and `W` the `lm_head` weights.
+    ///
+    /// This is the reference's binary linear head, and the same number as
+    /// `logits[yes] − logits[no]` — but computed in float32. Reading the two logits from the
+    /// bfloat16 vocabulary projection instead rounds each of them (magnitude ~20) to a step of
+    /// 1/16 before the subtraction, which collapses scores onto a coarse grid and makes
+    /// candidates tie.
+    ///
+    /// Text-only pairs run `batchSize` per model call: prompts are sorted by length,
+    /// right-padded to the micro-batch's longest and scored at each row's own last token.
+    /// Pairs carrying an image run one at a time. Scores come back in document order.
+    ///
+    /// - Parameters:
+    ///   - query: the query, scored against every document.
+    ///   - documents: the candidates.
+    ///   - batchSize: text-only pairs per model call; `1` scores one pair per call.
     public func rerank(
-        query: Qwen3VLContent, documents: [Qwen3VLContent]
+        query: Qwen3VLContent, documents: [Qwen3VLContent], batchSize: Int = 8
     ) async throws -> [Float] {
         guard !documents.isEmpty else { throw Qwen3VLEmbeddingError.emptyDocuments }
 
@@ -390,31 +415,92 @@ public actor Qwen3VLEmbeddingEngine {
         let directory = modelDirectory
 
         return try await container.perform { (context: ModelContext) in
+            guard let backbone = context.model as? Qwen3VLBackbone else {
+                throw Qwen3VLEmbeddingError.embedderNotLoaded
+            }
             let (yesId, noId) = try Self.rerankerTokenIds(
                 directory: directory, tokenizer: context.tokenizer)
+            let direction = Self.scoreDirection(backbone, yes: yesId, no: noId)
 
-            var scores: [Float] = []
-            scores.reserveCapacity(documents.count)
-            for document in documents {
+            var scores = [Float](repeating: 0, count: documents.count)
+            var textRows: [PreparedRow] = []
+            for (index, document) in documents.enumerated() {
                 let input = Qwen3VLPromptBuilder.rerankUserInput(
                     query: query, document: document, instruction: instruction,
                     minPixels: minPixels, maxPixels: maxPixels)
                 let lmInput = try await context.processor.prepare(input: input)
-                let cache = context.model.newCache(parameters: nil)
-                guard
-                    case .logits(let out) = try context.model.prepare(
-                        lmInput, cache: cache, windowSize: nil)
-                else { throw Qwen3VLEmbeddingError.prepareProducedTokens }
 
-                let length = lmInput.text.tokens.dim(-1)
-                let diff = (out.logits[0, length - 1, yesId] - out.logits[0, length - 1, noId])
-                    .asType(.float32)
-                MLX.eval(diff)
-                let d = Double(diff.item(Float.self))
-                scores.append(Float(1.0 / (1.0 + exp(-d))))
+                if batchSize > 1 && lmInput.image == nil && lmInput.video == nil {
+                    textRows.append(
+                        PreparedRow(
+                            index: index, tokens: lmInput.text.tokens.asArray(Int32.self),
+                            pixels: nil, grid: nil))
+                    continue
+                }
+                let cache = backbone.newCache(parameters: nil)
+                let hidden = try backbone.lastHiddenState(lmInput, cache: cache)  // [1, seq, hidden]
+                let score = Self.relevance(hidden[0..., hidden.dim(1) - 1], direction: direction)
+                MLX.eval(score)
+                scores[index] = score.item(Float.self)
+            }
+
+            // Sorting by length keeps each micro-batch's right-padding short.
+            textRows.sort {
+                $0.tokens.count == $1.tokens.count
+                    ? $0.index < $1.index : $0.tokens.count < $1.tokens.count
+            }
+            let padId = context.tokenizer.convertTokenToId("<|endoftext|>") ?? 151_643
+            var positionCache: [PositionKey: MLXArray] = [:]
+            var cursor = 0
+            while cursor < textRows.count {
+                let window = Array(textRows[cursor ..< min(cursor + batchSize, textRows.count)])
+                cursor += window.count
+                let states = Self.lastTokenStates(
+                    window, backbone: backbone, padId: padId, positionCache: &positionCache)
+                let batchScores = Self.relevance(states, direction: direction)
+                MLX.eval(batchScores)
+                for (row, score) in zip(window, batchScores.asArray(Float.self)) {
+                    scores[row.index] = score
+                }
             }
             return scores
         }
+    }
+
+    /// `sigmoid(h · direction)` per row, in float32: `[B, hidden]` → `[B]`.
+    private static func relevance(_ hidden: MLXArray, direction: MLXArray) -> MLXArray {
+        sigmoid((hidden.asType(.float32) * direction).sum(axis: -1))
+    }
+
+    /// `W[yes] − W[no]` in float32, `[hidden]`: the reference's binary score head.
+    ///
+    /// `W` is the `lm_head` weight, or the input-embedding matrix when the checkpoint ties
+    /// them (`tie_word_embeddings`, as Qwen3-VL-Reranker-2B does — it ships no `lm_head`
+    /// tensor). Neither carries a bias: the vendored `lm_head` is built `bias: false` and the
+    /// tied projection is a plain matmul. Quantized weights are dequantized for the two rows.
+    private static func scoreDirection(_ backbone: Qwen3VLBackbone, yes: Int, no: Int) -> MLXArray {
+        let ids = MLXArray([Int32(yes), Int32(no)])
+        let rows: MLXArray
+        if let head = backbone.languageModel.lmHead {
+            if let q = head as? QuantizedLinear {
+                rows = dequantized(
+                    q.weight[ids], scales: q.scales[ids], biases: q.biases?[ids],
+                    groupSize: q.groupSize, bits: q.bits, mode: q.mode)
+            } else {
+                rows = head.weight[ids]
+            }
+        } else {
+            let embedding = backbone.languageModel.model.embedTokens
+            if let q = embedding as? QuantizedEmbedding {
+                rows = dequantized(
+                    q.weight[ids], scales: q.scales[ids], biases: q.biases?[ids],
+                    groupSize: q.groupSize, bits: q.bits, mode: q.mode)
+            } else {
+                rows = embedding.weight[ids]
+            }
+        }
+        let w = rows.asType(.float32)
+        return w[0] - w[1]
     }
 
     private struct LogitScoreConfig: Decodable {

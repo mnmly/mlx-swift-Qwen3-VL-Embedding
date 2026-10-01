@@ -9,10 +9,12 @@ the reference [Qwen3-VL-Embedding](https://github.com/QwenLM/Qwen3-VL-Embedding)
 
 - **Embedding** — last-token (EOS) pooling of the model's `last_hidden_state`, L2-normalized,
   with optional Matryoshka (MRL) truncation.
-- **Reranking** — `sigmoid(logits[yes] − logits[no])` at the final prompt position.
+- **Reranking** — `sigmoid((W[yes] − W[no]) · h)` on the final prompt position's hidden state,
+  in float32: the reference's binary linear head, i.e. `logits[yes] − logits[no]` without the
+  bfloat16 rounding of the two logits.
 
 The single entry point is ``Qwen3VLEmbeddingSession``: load a checkpoint once, then call
-``Qwen3VLEmbeddingSession/embed(texts:instruction:)`` or ``Qwen3VLEmbeddingSession/rankedDocuments(query:documents:)``.
+``Qwen3VLEmbeddingSession/embed(texts:instruction:)`` or ``Qwen3VLEmbeddingSession/rankedDocuments(query:documents:batchSize:)``.
 The same session type drives both the `qwen3vl-embed` CLI and the SwiftUI demo app — all model
 and prompt logic lives here, not in either frontend.
 
@@ -70,7 +72,7 @@ predictable throughput.
 
 ### Reranking
 
-- ``Qwen3VLEmbeddingSession/rankedDocuments(query:documents:)``
+- ``Qwen3VLEmbeddingSession/rankedDocuments(query:documents:batchSize:)``
 
 ### Diagnostics and memory
 

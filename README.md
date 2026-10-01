@@ -15,7 +15,7 @@ reference repo layers on top:
 | Head | What it does | Needs vendored backbone? |
 |---|---|---|
 | **Embedder** | last-token (EOS) pooling of `last_hidden_state` → L2-normalize → optional Matryoshka (MRL) truncation | Yes — the public `Qwen3VL` exposes only logits, not the pre-`lm_head` hidden state |
-| **Reranker** | `sigmoid(logits[yes] − logits[no])` at the last position | No — uses stock `MLXVLM.Qwen3VL` logits directly |
+| **Reranker** | `sigmoid((W[yes] − W[no]) · h)` on the last position's `last_hidden_state`, in float32 (the reference's binary linear head; equal to `logits[yes] − logits[no]` without bfloat16 logit rounding). Text-only pairs are scored in right-padded micro-batches | Yes — same reason; reading the two logits from the bfloat16 vocabulary projection put every score on a 1/16 logit grid |
 
 A single library-side `Qwen3VLEmbeddingSession` drives both the `qwen3vl-embed` CLI and the SwiftUI
 demo app (the *shared-driver* pattern). Text, image, and cross-modal embeddings are supported.
@@ -27,7 +27,7 @@ PyTorch/transformers reference (enforced by `ParityTests`):
 
 | Path | Parity vs Python reference |
 |---|---|
-| Reranker score | \|Δ\| < 0.0064 |
+| Reranker score | \|Δ\| < 0.008 on the fixture; median 0.006 / max 0.036 over 93 queries × 50 passages |
 | Text embedding (cosine) | ≥ 0.9997 |
 | Image embedding (cosine) | ≥ 0.997 |
 
@@ -87,6 +87,8 @@ qwen3vl-embed rerank --model <Reranker-2B-dir>  "capital of France" "Paris is th
 qwen3vl-embed bench  --model <Embedding-2B-dir> --iterations 20   # throughput + leak watch
 qwen3vl-embed image-bench --model <Embedding-2B-dir> --images <dir> \
   --count 128 --batch-sizes 1,4,8,16,32                           # batch sweep + parity
+qwen3vl-embed rerank-bench --model <Reranker-2B-dir> --input items.json \
+  --batch-sizes 1,4,8,16 --scores scores.json   # rerank latency sweep + batch parity
 ```
 
 ## Build & test
