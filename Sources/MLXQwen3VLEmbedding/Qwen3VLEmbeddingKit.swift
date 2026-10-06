@@ -12,7 +12,7 @@ import MLXVLM
 
 public enum MLXQwen3VLEmbedding {
     /// Package version, bumped manually alongside releases.
-    public static let version = "0.0.1"
+    public static let version = "0.3.1"
 }
 
 /// Which Qwen3-VL head the session should run.

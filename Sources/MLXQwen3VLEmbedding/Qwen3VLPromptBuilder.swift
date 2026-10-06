@@ -109,17 +109,22 @@ enum Qwen3VLPromptBuilder {
     }
 
     private static func makeUserInput(
-        messages: [Message], images: [CGImage], minPixels _: Int, maxPixels _: Int
+        messages: [Message], images: [CGImage], minPixels: Int, maxPixels: Int
     ) -> UserInput {
         // Images go in as-is: since mlx-swift-lm 3.32 the stock Qwen3-VL processor applies the
         // sRGB tone curve itself before resampling (matching the reference's sRGB-encoded PIL
         // pixels). Pre-applying it here as well — needed up to 3.31.x — applies it twice and
         // drops image-embedding cosine vs the reference from ~0.997 to ~0.945.
         //
-        // Note: the processor resizes from the model's `preprocessor_config` (capped at a
-        // 1,280-token budget, which is what the released checkpoints ship), not from these
-        // `minPixels`/`maxPixels` budgets, so they are informational here.
-        let imageInputs: [UserInput.Image] = images.map { .ciImage(CIImage(cgImage: $0)) }
-        return UserInput(prompt: .messages(messages), images: imageInputs)
+        // The pixel budgets are passed through: the reference resizes to its own
+        // `min_pixels`/`max_pixels` (4–1800 tokens) and calls the HF processor with
+        // `do_resize=False`, so the checkpoint's `preprocessor_config` cap (1,280 tokens) never
+        // applies there. The 3.32 processor honours these per-call budgets; without them it would
+        // fall back to that 1,280-token cap and shrink large images more than the reference does.
+        var input = UserInput(
+            prompt: .messages(messages), images: images.map { .ciImage(CIImage(cgImage: $0)) })
+        input.processing.minPixels = minPixels
+        input.processing.maxPixels = maxPixels
+        return input
     }
 }
